@@ -1,25 +1,29 @@
+# path: Dockerfile
 FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential gcc g++ gfortran \
-    libopenblas-dev liblapack-dev \
-    libfreetype6-dev libpng-dev pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
+# Configurações básicas de Python
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    MPLBACKEND=Agg \
-    PYTHONPATH=/app
+    PYTHONUNBUFFERED=1
 
-ENV PORT=10000
-EXPOSE 10000
+# Diretório de trabalho
 WORKDIR /app
 
-COPY requirements.txt ./requirements.txt
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# Torna "api" importável e define porta padrão
+ENV PYTHONPATH=/app \
+    PORT=10000
 
+# Dependências
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Código do app
 COPY . .
-RUN mkdir -p /app/storage/datasets /app/storage/profiles /app/storage/plots
 
-EXPOSE 8000
-CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT}"]
+# Script de start
+COPY start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
+EXPOSE 10000
+
+# Inicia o backend
+ENTRYPOINT ["/app/start.sh"]

@@ -1,3 +1,4 @@
+# path: agente/api/services/llm_client.py
 from __future__ import annotations
 
 def llm_respond(question: str, profile: dict, memory: dict):

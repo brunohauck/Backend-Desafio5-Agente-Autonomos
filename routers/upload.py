@@ -1,45 +1,37 @@
-from __future__ import annotations
+# path: agente/api/routers/upload.py
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import JSONResponse
 import os
 from pathlib import Path
-import requests
-from fastapi import APIRouter, HTTPException, UploadFile, File
 
-router = APIRouter()
+# ✅ Router com prefixo e tag consistente
+router = APIRouter(prefix="/upload", tags=["Upload"])
 
+# Diretório base seguro (relativo a agente/api/)
 HERE = Path(__file__).resolve().parent.parent
-DATA_DIR = HERE / "storage" / "datasets"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR = HERE / "storage" / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 @router.post("/")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...)):
+    """
+    Faz upload de um arquivo CSV e salva em `api/storage/uploads/`.
+    Retorna o caminho físico e a URL relativa para acesso futuro.
+    """
+    # valida tipo
     if not file.filename.lower().endswith(".csv"):
-        raise HTTPException(400, "Envie um arquivo .csv")
-    out = DATA_DIR / file.filename
-    content = await file.read()
-    out.write_bytes(content)
-    return {"filename": file.filename, "size": len(content)}
+        raise HTTPException(status_code=400, detail="Apenas arquivos CSV são aceitos.")
 
-@router.post("/from_url")
-def upload_from_url(url: str, filename: str | None = None, max_mb: int = 300):
-    """Baixa CSV direto no servidor (evita limite de upload do navegador)."""
-    if not url.lower().startswith(("http://", "https://")):
-        raise HTTPException(400, "URL inválida.")
-    fn = filename or os.path.basename(url.split("?")[0]) or "dataset.csv"
-    if not fn.lower().endswith(".csv"):
-        fn += ".csv"
-    out = DATA_DIR / fn
+    file_path = UPLOAD_DIR / Path(file.filename).name
+    try:
+        contents = await file.read()
+        with open(file_path, "wb") as f:
+            f.write(contents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao salvar arquivo: {e}")
 
-    r = requests.get(url, stream=True, timeout=300)
-    r.raise_for_status()
-    size, limit = 0, max_mb * 1024 * 1024
-    with open(out, "wb") as f:
-        for chunk in r.iter_content(1024 * 1024):
-            if not chunk:
-                continue
-            size += len(chunk)
-            if size > limit:
-                f.close()
-                out.unlink(missing_ok=True)
-                raise HTTPException(413, f"Arquivo excede {max_mb}MB.")
-            f.write(chunk)
-    return {"filename": fn, "size": size}
+    return JSONResponse({
+        "message": "Upload realizado com sucesso",
+        "file_path": str(file_path),
+        "relative_path": f"/uploads/{file.filename}"
+    })
