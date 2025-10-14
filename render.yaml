@@ -1,20 +1,33 @@
+# path: render.yaml
 services:
   - type: web
-    name: agente-eda-backend
+    name: backend-desafio5-agente
     env: docker
-    plan: free
+    region: oregon             # ou a sua região preferida
+    plan: free                 # ou basic/standard, se precisar de mais recursos
+
+    # Como seu repo já tem Dockerfile na raiz
+    dockerfilePath: Dockerfile
+    rootDir: .                 # raiz do repositório
+
+    # Health check — o main.py expõe /health
+    healthCheckPath: /health
+    healthCheckTimeout: 60
+
     autoDeploy: true
+
     envVars:
-      - key: LLM_PROVIDER
-        value: gpt
-      - key: OPENAI_API_KEY
-        sync: false   # defina no painel do Render (Secret)
-      - key: OPENAI_MODEL
-        value: gpt-4o-mini
-      - key: MPLBACKEND
-        value: Agg
-      - key: BACKEND_BASE_URL
-        fromService:
-          name: agente-eda-backend
-          type: web
-          envVarKey: RENDER_EXTERNAL_URL   # Render injeta a URL pública
+      - key: PORT
+        value: "10000"
+      - key: PYTHONPATH
+        value: /app
+      # Opcional: caso seu frontend precise saber a URL do backend em runtime
+      # - key: API_URL
+      #   value: "https://backend-desafio5-agente.onrender.com"
+
+    # (Opcional) Disco persistente para uploads/plots que sobrevivam a deploy/restart
+    # Remova esta seção se NÃO quiser persistência
+    disk:
+      name: storage
+      mountPath: /app/storage
+      sizeGB: 1
