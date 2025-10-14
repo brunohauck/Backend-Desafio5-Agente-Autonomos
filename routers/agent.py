@@ -1,4 +1,4 @@
-# path: agente/api/routers/agent.py
+# path: routers/agent.py
 from __future__ import annotations
 
 import os
@@ -10,20 +10,20 @@ import requests
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-# ✅ IMPORT ABSOLUTO para funcionar com `uvicorn api.main:app`
-from api.services.llm_client import llm_respond
+# ✅ importa do services/ na raiz do projeto
+from services.llm_client import llm_respond
 
-# Prefixa o grupo de rotas /agent
+# Grupo de rotas /agent
 router = APIRouter(prefix="/agent", tags=["Agent"])
 
-# Pastas padrão (relativas a agente/api/)
-HERE = Path(__file__).resolve().parent.parent  # .../agente/api
+# Pastas (relativas à raiz do projeto)
+HERE = Path(__file__).resolve().parent.parent  # .../<repo-root>
 DATA_DIR = HERE / "storage" / "datasets"
 PROFILE_DIR = HERE / "storage" / "profiles"
 PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
-# Backend base URL para endpoints auxiliares de plot
-# Ordem de prioridade: BACKEND_BASE_URL > API_URL > RENDER_EXTERNAL_URL > localhost
+# URL base do backend (para endpoints de /plot/*)
+# Prioridade: BACKEND_BASE_URL > API_URL > RENDER_EXTERNAL_URL > localhost
 BASE_URL = (
     os.getenv("BACKEND_BASE_URL")
     or os.getenv("API_URL")
@@ -65,8 +65,8 @@ def _memory_path(dataset: str) -> Path:
 @router.post("/ask", response_model=AgentResponse)
 def ask_agent(req: AgentRequest):
     """
-    Recebe uma pergunta sobre o dataset e usa o LLM para responder,
-    opcionalmente solicitando geração de gráficos via rotas /plot/* do backend.
+    Responde perguntas sobre o dataset usando um LLM simples
+    e (opcionalmente) aciona geração de gráficos via /plot/*.
     """
     csv = DATA_DIR / req.dataset
     if not csv.exists():
@@ -75,14 +75,13 @@ def ask_agent(req: AgentRequest):
     profile = _json_load(_profile_path(req.dataset))
     memory = _json_load(_memory_path(req.dataset)) or {"history": [], "findings": []}
 
-    # Chama o cliente LLM (você implementa em api/services/llm_client.py)
     answer, meta = llm_respond(req.question, profile, memory)
 
     details: Dict[str, Any] = {}
     plot_path = None
     plot_url = None
 
-    # Se o LLM sugeriu um gráfico, delega para as rotas /plot/* do backend
+    # Requisita o gráfico ao próprio backend, se o meta sugerir
     if isinstance(meta, dict) and "plot" in meta and BASE_URL:
         plot = meta["plot"]
         try:
@@ -141,7 +140,6 @@ def ask_agent(req: AgentRequest):
                     plot_path, plot_url = j.get("plot_path"), j.get("plot_url")
 
         except Exception as e:
-            # Loga o erro no meta para debug (sem interromper a resposta do agente)
             if isinstance(meta, dict):
                 meta["plot_error"] = str(e)
 
