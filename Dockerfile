@@ -11,6 +11,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MPLBACKEND=Agg \
     PYTHONPATH=/app
 
+ENV PORT=10000
+EXPOSE 10000
 WORKDIR /app
 
 COPY requirements.txt ./requirements.txt
@@ -20,4 +22,4 @@ COPY . .
 RUN mkdir -p /app/storage/datasets /app/storage/profiles /app/storage/plots
 
 EXPOSE 8000
-CMD ["uvicorn", "main:asgi_app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn api.main:app --host 0.0.0.0 --port ${PORT}"]
