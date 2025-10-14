@@ -1,26 +1,34 @@
+from __future__ import annotations
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.routers.upload import router as upload_router
-from api.routers.profile import router as profile_router
-from api.routers.agent import router as agent_router
-from api.routers.plot import router as plot_router
 from fastapi.staticfiles import StaticFiles
 
-app = FastAPI(title="Agente EDA Autônomo")
+HERE = Path(__file__).resolve().parent
+STORAGE_DIR = HERE / "storage"
+PLOTS_DIR   = STORAGE_DIR / "plots"
 
-app.add_middleware(
+from routers import upload, profile, agent, plot
+
+asgi_app = FastAPI(title="Agente EDA (Docker/local)")
+
+asgi_app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.mount("/static", StaticFiles(directory="api/storage/plots"), name="static")
-app.include_router(plot_router, prefix="/plot", tags=["Plot"])
-app.include_router(upload_router,  prefix="/upload",  tags=["Upload"])
-app.include_router(profile_router, prefix="/profile", tags=["Profile"])
-app.include_router(agent_router,   prefix="/agent",   tags=["Agent"])
 
-@app.get("/")
-def root():
-    return {"message": "API do Agente EDA ativa 🚀"}
+asgi_app.include_router(upload.router,  prefix="/upload",  tags=["Upload"])
+asgi_app.include_router(profile.router, prefix="/profile", tags=["Profile"])
+asgi_app.include_router(agent.router,   prefix="/agent",   tags=["Agent"])
+asgi_app.include_router(plot.router,    prefix="/plot",    tags=["Plot"])
+
+STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+asgi_app.mount("/static", StaticFiles(directory=str(PLOTS_DIR)), name="static")
+
+@asgi_app.get("/health")
+def health():
+    return {"status": "ok"}

@@ -1,82 +1,99 @@
-# api/routers/plot.py
-from fastapi import APIRouter, HTTPException, Query
+from __future__ import annotations
+import os
 from pathlib import Path
 import pandas as pd
-import numpy as np
 import matplotlib
-matplotlib.use("Agg")  # backend para servidor (sem GUI)
+matplotlib.use(os.getenv("MPLBACKEND", "Agg"))
 import matplotlib.pyplot as plt
+from fastapi import APIRouter, HTTPException, Query
 
 router = APIRouter()
 
-DATASET_DIR = Path("api/storage/datasets")
-PLOTS_DIR = Path("api/storage/plots")
-PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+HERE = Path(__file__).resolve().parent.parent
+DATA_DIR = HERE / "storage" / "datasets"
+PLOT_DIR = HERE / "storage" / "plots"
+PLOT_DIR.mkdir(parents=True, exist_ok=True)
 
-def _csv_path(filename: str) -> Path:
-    p = DATASET_DIR / filename
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="CSV não encontrado.")
-    return p
+def _resp(fname: str):
+    return {"plot_path": str(PLOT_DIR / fname), "plot_url": f"/static/{fname}"}
 
-def _save_fig(fig, image_name: str):
-    out = PLOTS_DIR / image_name
-    fig.savefig(out, bbox_inches="tight")
-    plt.close(fig)
-    # Devolve caminho absoluto e uma URL estática (servida pela API)
-    return str(out.resolve()), f"/static/{out.name}"
-
-@router.get("/amount_hist/{filename}")
-def amount_hist(
-    filename: str,
-    bins: int = Query(50, ge=5, le=200),
-    log: bool = True,
-):
-    csv_path = _csv_path(filename)
-
-    arrays = []
-    for chunk in pd.read_csv(csv_path, usecols=["Amount"], chunksize=200_000, low_memory=False):
-        s = pd.to_numeric(chunk["Amount"], errors="coerce").dropna()
-        if not s.empty:
-            arrays.append(s.values)
-    if not arrays:
-        raise HTTPException(status_code=400, detail="Coluna Amount vazia ou ausente.")
-
-    data = np.concatenate(arrays)
-
-    fig = plt.figure()
-    plt.hist(data, bins=bins, log=log)
+@router.get("/amount_hist/{dataset}")
+def amount_hist(dataset: str, bins: int = 50, log: bool = True):
+    csv = DATA_DIR / dataset
+    if not csv.exists():
+        raise HTTPException(404, "Dataset não encontrado.")
+    df = pd.read_csv(csv, usecols=["Amount"])
+    plt.figure(figsize=(8,4))
+    plt.hist(df["Amount"], bins=bins, log=log)
     plt.title("Distribuição de Amount")
-    plt.xlabel("Amount")
-    plt.ylabel("Frequência (log)" if log else "Frequência")
+    plt.xlabel("Amount"); plt.ylabel("Frequência (log)" if log else "Frequência")
+    fname = f"{dataset}_amount_hist.png"
+    plt.tight_layout(); plt.savefig(PLOT_DIR / fname); plt.close()
+    return _resp(fname)
 
-    plot_path, plot_url = _save_fig(fig, f"{filename}_amount_hist.png")
-    return {"plot_path": plot_path, "plot_url": plot_url}
+@router.get("/time_series/{dataset}")
+def time_series(dataset: str, bins: int = 120):
+    csv = DATA_DIR / dataset
+    if not csv.exists():
+        raise HTTPException(404, "Dataset não encontrado.")
+    df = pd.read_csv(csv, usecols=["Time"])
+    cuts = pd.cut(df["Time"], bins=bins)
+    series = df.groupby(cuts).size()
+    plt.figure(figsize=(9,4))
+    plt.plot(range(len(series)), series.values)
+    plt.title("Série temporal (contagem por intervalo)")
+    plt.xlabel("Intervalo de tempo"); plt.ylabel("Contagem")
+    fname = f"{dataset}_time_series.png"
+    plt.tight_layout(); plt.savefig(PLOT_DIR / fname); plt.close()
+    return _resp(fname)
 
-@router.get("/time_series/{filename}")
-def time_series(
-    filename: str,
-    bins: int = Query(120, ge=10, le=2000)
-):
-    csv_path = _csv_path(filename)
+@router.get("/corr_heatmap/{dataset}")
+def corr_heatmap(dataset: str, sample_rows: int = 50000):
+    csv = DATA_DIR / dataset
+    if not csv.exists():
+        raise HTTPException(404, "Dataset não encontrado.")
+    df = pd.read_csv(csv, nrows=sample_rows)
+    corr = df.corr(numeric_only=True)
+    plt.figure(figsize=(8,6))
+    plt.imshow(corr, aspect='auto'); plt.colorbar()
+    plt.title("Mapa de calor da correlação")
+    plt.xticks(range(len(corr.columns)), corr.columns, rotation=90, fontsize=6)
+    plt.yticks(range(len(corr.columns)), corr.columns, fontsize=6)
+    fname = f"{dataset}_corr_heatmap.png"
+    plt.tight_layout(); plt.savefig(PLOT_DIR / fname); plt.close()
+    return _resp(fname)
 
-    arrays = []
-    for chunk in pd.read_csv(csv_path, usecols=["Time"], chunksize=300_000, low_memory=False):
-        s = pd.to_numeric(chunk["Time"], errors="coerce").dropna()
-        if not s.empty:
-            arrays.append(s.values.astype(float))
-    if not arrays:
-        raise HTTPException(status_code=400, detail="Coluna Time vazia ou ausente.")
+@router.get("/box_amount_by_class/{dataset}")
+def box_amount_by_class(dataset: str, max_per_class: int = 20000):
+    csv = DATA_DIR / dataset
+    if not csv.exists():
+        raise HTTPException(404, "Dataset não encontrado.")
+    df = pd.read_csv(csv, usecols=["Amount","Class"])
+    df0 = df[df["Class"]==0].sample(min(max_per_class, (df["Class"]==0).sum()), random_state=42)
+    df1 = df[df["Class"]==1].sample(min(max_per_class, (df["Class"]==1).sum()), random_state=42)
+    plt.figure(figsize=(6,4))
+    plt.boxplot([df0["Amount"], df1["Amount"]], labels=["Normal","Fraude"], showfliers=False)
+    plt.title("Boxplot Amount por Classe")
+    fname = f"{dataset}_box_amount_by_class.png"
+    plt.tight_layout(); plt.savefig(PLOT_DIR / fname); plt.close()
+    return _resp(fname)
 
-    t = np.concatenate(arrays)
-    counts, edges = np.histogram(t, bins=bins)
-    centers = (edges[:-1] + edges[1:]) / 2
-
-    fig = plt.figure()
-    plt.plot(centers, counts)
-    plt.title("Contagem de Transações ao Longo do Tempo")
-    plt.xlabel("Time (s desde a 1ª transação)")
-    plt.ylabel("Contagem por janela")
-
-    plot_path, plot_url = _save_fig(fig, f"{filename}_time_series_{bins}.png")
-    return {"plot_path": plot_path, "plot_url": plot_url}
+@router.get("/scatter_pca/{dataset}")
+def scatter_pca(dataset: str,
+                x: str = Query("V1"),
+                y: str = Query("V2"),
+                sample_rows: int = 50000):
+    csv = DATA_DIR / dataset
+    if not csv.exists():
+        raise HTTPException(404, "Dataset não encontrado.")
+    usecols = [c for c in [x,y,"Class"] if c]
+    df = pd.read_csv(csv, usecols=usecols, nrows=sample_rows)
+    plt.figure(figsize=(6,5))
+    if "Class" in df.columns:
+        plt.scatter(df[x], df[y], c=df["Class"], s=4, alpha=0.5)
+    else:
+        plt.scatter(df[x], df[y], s=4, alpha=0.5)
+    plt.xlabel(x); plt.ylabel(y); plt.title(f"Scatter {x} vs {y}")
+    fname = f"{dataset}_scatter_{x}_{y}.png"
+    plt.tight_layout(); plt.savefig(PLOT_DIR / fname); plt.close()
+    return _resp(fname)

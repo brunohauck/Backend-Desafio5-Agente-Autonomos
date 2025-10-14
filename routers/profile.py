@@ -1,63 +1,81 @@
-# api/routers/profile.py
-from fastapi import APIRouter, HTTPException
-from pathlib import Path
-import pandas as pd
+from __future__ import annotations
 import json
+from pathlib import Path
+from typing import Dict, Any
+import pandas as pd
+from fastapi import APIRouter, HTTPException
 
 router = APIRouter()
 
-DATASET_DIR = Path("api/storage/datasets")
-PROFILE_DIR = Path("api/storage/profiles")
+HERE = Path(__file__).resolve().parent.parent
+DATA_DIR = HERE / "storage" / "datasets"
+PROFILE_DIR = HERE / "storage" / "profiles"
 PROFILE_DIR.mkdir(parents=True, exist_ok=True)
 
-@router.get("/show/{filename}")
-def show_profile(filename: str):
-    """Retorna o JSON de perfil já salvo no disco (sem recalcular)."""
-    p = PROFILE_DIR / f"{filename}_profile.json"
-    if not p.exists():
-        raise HTTPException(status_code=404, detail="Perfil ainda não foi gerado.")
-    with open(p, "r") as f:
-        data = json.load(f)
-    return data
+def _profile_path(dataset: str) -> Path:
+    return PROFILE_DIR / f"{Path(dataset).name}_profile.json"
 
-@router.get("/{filename}")
-def generate_profile(filename: str):
-    csv_path = DATASET_DIR / filename
-    if not csv_path.exists():
-        raise HTTPException(status_code=404, detail="CSV não encontrado em api/storage/datasets.")
+@router.get("/{dataset}")
+def build_profile(dataset: str, chunksize: int = 100_000) -> Dict[str, Any]:
+    csv = DATA_DIR / dataset
+    if not csv.exists():
+        raise HTTPException(404, "Dataset não encontrado.")
 
-    # 1) Contagem total de linhas via chunks (sem carregar tudo em RAM)
-    total_rows = 0
-    for chunk in pd.read_csv(csv_path, chunksize=200_000, low_memory=False):
-        total_rows += len(chunk)
+    cols = None
+    count = 0
+    sums, sumsqr, mins, maxs = {}, {}, {}, {}
 
-    # 2) Sample pequeno para extrair colunas, dtypes e um describe() inicial
-    sample_rows = 5000
-    try:
-        df_sample = pd.read_csv(csv_path, nrows=sample_rows, low_memory=False)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao ler sample do CSV: {e}")
+    for chunk in pd.read_csv(csv, chunksize=chunksize):
+        if cols is None:
+            cols = chunk.columns.tolist()
+            for c in cols:
+                mins[c] = float("inf")
+                maxs[c] = float("-inf")
+                sums[c] = 0.0
+                sumsqr[c] = 0.0
 
-    columns = df_sample.columns.tolist()
-    dtypes = df_sample.dtypes.astype(str).to_dict()
+        num_cols = [c for c in cols if c in chunk.columns and pd.api.types.is_numeric_dtype(chunk[c])]
+        for c in num_cols:
+            mn, mx = float(chunk[c].min()), float(chunk[c].max())
+            mins[c] = min(mins[c], mn)
+            maxs[c] = max(maxs[c], mx)
+            s = float(chunk[c].sum())
+            sums[c] += s
+            sumsqr[c] += float((chunk[c] ** 2).sum())
+        count += len(chunk)
 
-    # describe de numéricos; se quiser incluir categóricas, use include='all'
-    try:
-        summary = df_sample.describe(include="all").to_dict()
-    except Exception:
-        summary = df_sample.describe().to_dict()
+    means, stds = {}, {}
+    for c in cols:
+        if c in sums:
+            means[c] = sums[c] / max(count, 1)
+            var = (sumsqr[c] / max(count, 1)) - (means[c] ** 2)
+            stds[c] = (var ** 0.5) if var > 0 else 0.0
 
-    profile = {
-        "filename": filename,
-        "rows_total": total_rows,
-        "rows_previewed": len(df_sample),
-        "columns": columns,
-        "types": dtypes,
-        "summary": summary
+    fraud_rate = None
+    if "Class" in cols:
+        fraud = 0
+        total = 0
+        for chunk in pd.read_csv(csv, chunksize=chunksize):
+            fraud += int((chunk["Class"] == 1).sum())
+            total += len(chunk)
+        fraud_rate = fraud / total if total else None
+
+    out = {
+        "dataset": dataset,
+        "columns": cols,
+        "count": count,
+        "means": means,
+        "stds": stds,
+        "mins": mins,
+        "maxs": maxs,
+        "fraud_rate": fraud_rate,
     }
+    _profile_path(dataset).write_text(json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8")
+    return out
 
-    out_path = PROFILE_DIR / f"{filename}_profile.json"
-    with open(out_path, "w") as f:
-        json.dump(profile, f, indent=2)
-
-    return {"message": "Profile gerado", "path": str(out_path), "rows_total": total_rows, "columns_count": len(columns)}
+@router.get("/show/{dataset}")
+def show_profile(dataset: str):
+    p = _profile_path(dataset)
+    if not p.exists():
+        raise HTTPException(404, "Perfil não encontrado. Gere primeiro.")
+    return json.loads(p.read_text(encoding="utf-8"))

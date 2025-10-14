@@ -1,10 +1,11 @@
 fastapi
 uvicorn[standard]
-python-multipart
 pandas
 numpy
 matplotlib
 requests
+python-multipart
 python-dotenv
+asgiref
 openai>=1.43.0
 google-generativeai
