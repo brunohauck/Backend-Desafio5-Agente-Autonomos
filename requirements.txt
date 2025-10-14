@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pandas
+numpy
+matplotlib
+requests
+python-dotenv
+openai>=1.43.0
+google-generativeai
